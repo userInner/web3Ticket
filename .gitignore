@@ -5,21 +5,21 @@
  ./front/dist
 
  # Vite build cache
- .vite/
+ ./front/.vite/
 
  # Environment variables
- .env
- .env*.local
+ ./front/.env
+ ./front/.env*.local
 
  # IDE/editor specific files
- .idea/
- .vscode/
- *.suo
- *.ntvs*
- *.njsproj
- *.sln
- *.sw?
+ ./front/.idea/
+ ./front/.vscode/
+ ./front/*.suo
+ ./front/*.ntvs*
+ ./front/*.njsproj
+ ./front/*.sln
+ ./front/*.sw?
 
  # OS generated files
  .DS_Store
- Thumbs.db
+ ./front/Thumbs.db
