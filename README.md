@@ -1,6 +1,7 @@
 # Web3Ticket - 我的抽奖应用 (My Lottery App)
 
 欢迎来到 Web3Ticket！这是一个基于 Web3 技术的去中心化抽奖前端应用。用户可以通过此应用与部署在区块链上的抽奖智能合约进行交互。
+![alt text](admin.png) ![alt text](history.png) ![alt text](home.png)
 
 ## ✨ 功能特性 (Features)
 
