@@ -1,0 +1,25 @@
+ # Dependencies
+ ./front/node_modules
+
+ # Build directory
+ ./front/dist
+
+ # Vite build cache
+ .vite/
+
+ # Environment variables
+ .env
+ .env*.local
+
+ # IDE/editor specific files
+ .idea/
+ .vscode/
+ *.suo
+ *.ntvs*
+ *.njsproj
+ *.sln
+ *.sw?
+
+ # OS generated files
+ .DS_Store
+ Thumbs.db
