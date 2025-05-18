@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useAppContext } from '../context/AppContext';
+import { VStack, Text } from '@chakra-ui/react'; 
 
-export function useContractEvents(contract, fetchContractData, fetchPlayers, fetchHistoricalWinners) {
+export function useContractEvents(contract, fetchContractData, fetchPlayers, fetchHistoricalWinners, requestWinnerToastIdRef, toast) {
   const { showNotification } = useAppContext();
 
   useEffect(() => {
@@ -17,7 +18,8 @@ export function useContractEvents(contract, fetchContractData, fetchPlayers, fet
 
     const onWinnerPicked = (winner, amountWon, event) => {
       console.log("Hook Event: WinnerPicked", { winner, amountWon: ethers.formatEther(amountWon) });
-      showNotification(`🎉 恭喜中奖者: ${winner.slice(0,6)}...${winner.slice(-4)}! 赢得 ${ethers.formatEther(amountWon)} ETH!`, "success", 10000);
+      // showNotification(`🎉 恭喜中奖者: ${winner.slice(0,6)}...${winner.slice(-4)}! 赢得 ${ethers.formatEther(amountWon)} ETH!`, "success", 10000);
+      toast.close(requestWinnerToastIdRef.current);
       if (fetchContractData) fetchContractData(contract);
       if (fetchPlayers) fetchPlayers(contract); // Players list should be empty or reset
       if (fetchHistoricalWinners) fetchHistoricalWinners(contract);
