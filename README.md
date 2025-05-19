@@ -8,6 +8,7 @@
 *   连接 Web3 钱包 (例如 MetaMask)
 *   查看当前可参与的抽奖活动
 *   购买抽奖彩票
+*   使用 Chainlink VRF 保证抽奖的公平性和随机性
 *   查看历史抽奖结果
 *   (根据你的项目具体功能，可以添加更多特性，例如：管理员创建和管理抽奖活动等)
 
@@ -16,7 +17,7 @@
 *   **前端框架**: React
 *   **构建工具**: Vite
 *   **包管理器**: npm
-*   **Web3 集成**: ethers.js, web3.js
+*   **Web3 集成**: ethers.js (或 web3.js), Chainlink VRF
 *   **目标区块链**: Ethereum
 *   **UI 库/组件**: chakra-ui
 
@@ -51,6 +52,21 @@
 
 3.  **配置环境变量**:
     在项目根目录 `d:\project\Front\web3Ticket\my-lottery-app\` 下，你可能需要创建一个 `.env.local` 文件来配置环境变量。如果项目中有 `.env.example` 文件，可以复制它并重命名为 `.env.local`。
+
+    **重要：Chainlink VRF 配置**
+    本项目的抽奖智能合约依赖 **Chainlink VRF (Verifiable Random Function)** 来获取可验证的随机数，以确保抽奖的公平性。因此，在与合约交互（特别是创建抽奖或执行抽奖环节）之前，你需要完成以下 Chainlink VRF 的配置步骤：
+
+    1.  **创建 VRF 订阅 (Create VRF Subscription)**:
+        *   访问 Chainlink VRF 订阅页面 (请确保选择了正确的测试网或主网)。
+        *   创建一个新的订阅。
+
+    2.  **为订阅充值 LINK (Fund Subscription with LINK)**:
+        *   你的订阅需要有足够的 LINK 代币来支付请求随机数所产生的费用。
+        *   将 LINK 代币转入你的订阅账户。
+
+    3.  **添加消费者 (Add Consumer)**:
+        *   将你部署的抽奖智能合约地址添加为你 VRF 订阅的消费者 (Consumer)。这样，你的合约才有权限从该订阅请求随机数。
+
     例如：
     ```env
     # .env.local
