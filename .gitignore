@@ -1,25 +1,25 @@
  # Dependencies
-/front/node_modules
+ ./front/node_modules
 
  # Build directory
-/front/dist
+ ./front/dist
 
  # Vite build cache
-/front/.vite/
+ ./front/.vite/
 
  # Environment variables
-/front/.env
-/front/.env*.local
+ ./front/.env
+ ./front/.env*.local
 
  # IDE/editor specific files
-/front/.idea/
-/front/.vscode/
-/front/*.suo
-/front/*.ntvs*
-/front/*.njsproj
-/front/*.sln
-/front/*.sw?
+ ./front/.idea/
+ ./front/.vscode/
+ ./front/*.suo
+ ./front/*.ntvs*
+ ./front/*.njsproj
+ ./front/*.sln
+ ./front/*.sw?
 
  # OS generated files
-.DS_Store
-./front/Thumbs.db
+ .DS_Store
+ ./front/Thumbs.db

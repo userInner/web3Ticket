@@ -2,71 +2,49 @@
 pragma solidity ^0.8.19;
 
 /**
- * @title SimpleLottery with Chainlink VRF
- * @dev A basic decentralized lottery contract that uses Chainlink VRF V2+
- * for secure random number generation to pick a winner.
- * For this contract to work, it needs to be funded with LINK tokens,
- * and the contract address must be added as a consumer to an active VRF V2+ subscription.
+ * @title SimpleLottery
+ * @dev A basic decentralized lottery contract.
+ * IMPORTANT: The random number generation in this contract (pickWinner function)
+ * is NOT cryptographically secure and is vulnerable to manipulation.
+ * For a production environment, use a secure source of randomness like Chainlink VRF.
  */
-
-import {VRFConsumerBaseV2Plus} from "@chainlink/contracts@1.3.0/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
-import {VRFV2PlusClient} from "@chainlink/contracts@1.3.0/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
-
-contract SimpleLottery is VRFConsumerBaseV2Plus {
+contract SimpleLottery {
+    address public owner;
     uint256 public ticketPrice;
     address payable[] public players; // Array to store player addresses
     uint256 public prizePool;
     bool public lotteryOpen;
     uint256 public lastWinnerAmount; // Stores the amount the last winner received
-    bool public isPickingWinner;     // Indicates if there was a last winner
-    address public lastWinner;       // Stores the address of the last winner
-
-    // VRF Configuration
-    uint256 public s_subscriptionId;
-    bytes32 public s_keyHash = 0x787d74caea10b2b357790d5b5247c2f63d1d91572a9846f780606e4d953677ae; // AKA Gas Lane
-    // These can be made configurable by owner if needed
-    uint32 public s_callbackGasLimit = 200000; // Adjust based on fulfillRandomWords complexity
-    uint16 public s_requestConfirmations = 3;  // Min 3 for mainnets, 1 for testnets often ok
-    uint32 public s_numWords = 1;              // Requesting one random word
-
-    // VRF State
-    mapping(uint256 => bool) public s_fulfilledRequests; // requestId => fulfilled
-    
-    uint256 public s_lastRequestId; // Stores the ID of the last VRF request
+    address public lastWinner; // Stores the address of the last winner
 
     event LotteryEntered(address indexed player, uint256 amount);
     event WinnerPicked(address indexed winner, uint256 prizeAmount);
     event LotteryReset();
-    event RandomWordsRequested(uint256 indexed requestId, address indexed requester);
-    event RandomWordsFulfilled(uint256 indexed requestId, uint256[] randomWords);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "SimpleLottery: Caller is not the owner");
+        _;
+    }
 
     modifier whenLotteryOpen() {
-        require(!isPickingWinner, "SimpleLottery: Currently picking a winner, please wait");
         require(lotteryOpen, "SimpleLottery: Lottery is not open");
         _;
     }
 
     modifier whenLotteryClosed() {
-        require(!isPickingWinner, "SimpleLottery: Currently picking a winner, please wait");
-        require(!lotteryOpen, "SimpleLottery: Lottery is currently open");
+        require(!lotteryOpen, "SimpleLottery: Lottery is still open");
         _;
     }
 
     /**
      * @dev Sets the initial ticket price and the owner of the contract.
      * @param _initialTicketPrice The price for one lottery ticket in Wei.
-     * @param _subscriptionId The VRF subscription ID.
      */
-    constructor(
-        uint256 _initialTicketPrice,
-        uint256 _subscriptionId
-    ) VRFConsumerBaseV2Plus(0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B) { // Pass coordinator to base contract
+    constructor(uint256 _initialTicketPrice) {
         require(_initialTicketPrice > 0, "SimpleLottery: Ticket price must be greater than 0");
+        owner = msg.sender;
         ticketPrice = _initialTicketPrice;
         lotteryOpen = true; // Lottery starts open by default
-        isPickingWinner = false; // No winner picked at the start
-        prizePool = 0;
-        s_subscriptionId = _subscriptionId;
     }
 
     /**
@@ -84,77 +62,44 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
     }
 
     /**
-     * @dev Owner requests a random winner from Chainlink VRF.
-     * The lottery must have at least one player.
-     * This will close the lottery for new entries.
+     * @dev Generates a pseudo-random index to pick a winner.
+     * WARNING: This is NOT secure for production. Use Chainlink VRF.
      */
-    function requestWinner() public onlyOwner whenLotteryOpen {
-        require(players.length > 0, "SimpleLottery: No players to pick from");
-        require(s_subscriptionId != 0, "SimpleLottery: Subscription ID not set");
-        // Note: Ensuring Chainlink subscription is funded with LINK is an off-chain responsibility.
-
-        lotteryOpen = false; // Close lottery to new entries while waiting for randomness
-
-        // Request randomness from Chainlink VRF
-        s_lastRequestId = s_vrfCoordinator.requestRandomWords(
-            VRFV2PlusClient.RandomWordsRequest({
-                keyHash: s_keyHash,
-                subId: s_subscriptionId,
-                requestConfirmations: s_requestConfirmations,
-                callbackGasLimit: s_callbackGasLimit,
-                numWords: s_numWords,
-                extraArgs: VRFV2PlusClient._argsToBytes(
-                    VRFV2PlusClient.ExtraArgsV1({
-                        nativePayment: false // use link pay for VRF
-                    })
-                )
-            })
-        );
-        isPickingWinner = true; // Set to true to indicate a winner is being picked
-        emit RandomWordsRequested(s_lastRequestId, msg.sender);
+    function _generateRandomIndex() private view returns (uint256) {
+        // Simple pseudo-random number generation.
+        // Combining block information with players length.
+        // This is predictable and can be influenced by miners.
+        return uint256(keccak256(abi.encodePacked(block.timestamp, block.prevrandao, players.length, prizePool))) % players.length;
     }
 
     /**
-     * @dev Callback function for Chainlink VRF to fulfill the random words request.
-     * This function should only be callable by the VRFCoordinator (via VRFConsumerBaseV2Plus).
-     * It picks the winner, transfers the prize, and resets the lottery.
+     * @dev Picks a winner, transfers the prize pool, and resets the lottery.
+     * Only the owner can call this function.
+     * The lottery must have at least one player.
      */
-    function fulfillRandomWords(
-        uint256 _requestId,
-        uint256[] calldata _randomWords
-    ) internal override {
-        require(s_fulfilledRequests[_requestId] == false, "SimpleLottery: Request already fulfilled or invalid");
-        s_fulfilledRequests[_requestId] = true;
+    function pickWinner() public onlyOwner whenLotteryOpen {
+        require(players.length > 0, "SimpleLottery: No players to pick from");
 
-        emit RandomWordsFulfilled(_requestId, _randomWords);
-
-        // Ensure players array is not empty. This should be guaranteed by requestWinner's check
-        // and lotteryOpen=false preventing modifications.
-        // If players.length is 0 here, the modulo operation below would revert, which is a safe failure.
-        require(players.length > 0, "SimpleLottery: No players to pick from during fulfillment (unexpected state)");
-
-        uint256 winnerIndex = _randomWords[0] % players.length;
+        uint256 winnerIndex = _generateRandomIndex();
         address payable winner = players[winnerIndex];
 
-        uint256 prizeAmountToAward = prizePool; // Capture current prize pool amount
-
+        // Transfer the prize pool to the winner
+        // Using call to send Ether is generally safer against reentrancy if not handled carefully,
+        // but for a simple transfer like this, .transfer() is okay.
+        // However, .send() and .transfer() are limited to 2300 gas and might fail
+        // if the recipient is a contract with a fallback function that requires more gas.
+        // Using .call{value: ...}("") is the currently recommended way.
         lastWinner = winner;
-        lastWinnerAmount = prizeAmountToAward;
-        isPickingWinner = false; // Set to false to indicate a winner has been picked
-        _resetLottery(); // Resets players, prizePool, and ensures lotteryOpen is false
+        lastWinnerAmount = prizePool;
+        _resetLottery();
+        (bool success, ) = winner.call{value: prizePool}("");
+        require(success, "SimpleLottery: Failed to send Ether to the winner");
 
-        if (prizeAmountToAward > 0) {
-            (bool success, ) = winner.call{value: prizeAmountToAward}("");
-            // If transfer fails, the entire fulfillRandomWords transaction reverts.
-            // This means s_fulfilledRequests[_requestId] remains false, prizePool and players are not reset.
-            // Lottery remains closed (lotteryOpen = false from requestWinner).
-            // Owner needs to investigate the cause (e.g., winner contract cannot receive Ether).
-            require(success, "SimpleLottery: Failed to send Ether to the winner");
-        }
-        // If prizeAmountToAward is 0 (e.g., no entries but somehow players.length > 0, or an error),
-        // a winner is still picked but receives 0. This is logged by WinnerPicked event.
+        
 
-        emit WinnerPicked(winner, prizeAmountToAward);
+        emit WinnerPicked(winner, prizePool);
+
+        // Reset the lottery for the next round
     }
 
     /**
@@ -165,7 +110,9 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
     function _resetLottery() internal {
         players = new address payable[](0); // Clear the players array
         prizePool = 0;
-        lotteryOpen = false; // Ensures lottery remains closed until explicitly opened by owner
+        // lotteryOpen can be set to true here or managed by a separate function
+        // For now, let's assume pickWinner closes the lottery until owner re-opens or a new one starts.
+        lotteryOpen = false; // Close the lottery after a winner is picked
         emit LotteryReset();
     }
 

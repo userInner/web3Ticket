@@ -3,7 +3,6 @@ import { Box, Heading, Text, VStack, List, ListItem, ListIcon, useColorModeValue
 import { FaUserCircle } from 'react-icons/fa'; // 导入一个用户图标
 
 function PlayerList({ players, lotteryStatus }) {
-  console.log("PlayerList rendered");
   const cardBg = useColorModeValue('white', 'gray.700');
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const headingColor = useColorModeValue('gray.700', 'whiteAlpha.900');
