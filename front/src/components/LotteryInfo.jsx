@@ -11,7 +11,6 @@ function LotteryInfo({
   fetchContractData,
   contract
 }) {
-  const { shortenAddress } = useAppContext();
   const cardBg = useColorModeValue('white', 'gray.700');
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const headingColor = useColorModeValue('gray.700', 'whiteAlpha.900');

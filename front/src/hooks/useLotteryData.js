@@ -103,11 +103,18 @@ export function useLotteryData(contract, provider) {
   // Initial fetch and refetch when contract changes
   useEffect(() => {
     if (contract && provider) {
-      fetchContractData(contract);
+      console.log("useLotteryData: useEffect for players and historical winners triggered.");
       fetchPlayers(contract);
       fetchHistoricalWinners(contract);
     }
-  }, [contract, provider, fetchContractData, fetchPlayers, fetchHistoricalWinners]);
+  }, [contract, provider]); // 只依赖 contract 和 provider
+
+  useEffect(() => {
+    if (contract && provider) {
+      console.log("useLotteryData fetchContractData useEffect triggered."); // 添加日志
+      fetchContractData(contract);
+    }
+  }, [contract, provider]); // 只依赖 contract 和 provider
 
   return { ticketPrice, prizePool, lotteryStatus, owner, players, historicalWinners, isLoadingData, fetchContractData, fetchPlayers, fetchHistoricalWinners, setPlayers, setHistoricalWinners, setLotteryStatus, setPrizePool };
 }
