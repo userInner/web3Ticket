@@ -75,9 +75,8 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
      */
     constructor(
         uint256 _initialTicketPrice,
-        uint256 _vrfSubscriptionId,
-        address _vrfCoordinatorAddress // Add this parameter
-    ) VRFConsumerBaseV2Plus(_vrfCoordinatorAddress) { // Pass coordinator to base contract
+        uint256 _vrfSubscriptionId
+    ) VRFConsumerBaseV2Plus(0x9DdfaCa8183c41ad55329BdeeD9F6A8d53168B1B) { // Pass coordinator to base contract
         require(_initialTicketPrice > 0, "SimpleLottery: Ticket price must be greater than 0");
         ticketPrice = _initialTicketPrice;
         lotteryOpen = false; // Start closed, owner must configure prizes and open
