@@ -49,7 +49,7 @@ README.md                   # 本文件
 2. **新建配置文件**:
     1. contract下新建hardhat.config.js文件
     2. 内容：
-    ```js
+```js
 require("@nomicfoundation/hardhat-toolbox");
 
 /** @type import('hardhat/config').HardhatUserConfig */
@@ -74,7 +74,7 @@ module.exports = {
     }
   }
 };
-    ```
+ ```
 ## 主要 Hardhat 命令
 
 *   **清理缓存和构建文件**:
