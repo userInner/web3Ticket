@@ -1,5 +1,10 @@
  # Dependencies
 /front/node_modules
+/contract/node_modules
+/contract/cache
+/contract/artifacts
+/contract/ignition/deployments/*
+/contract/coverage
 
  # Build directory
 /front/dist
