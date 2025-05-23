@@ -13,7 +13,6 @@ pragma solidity ^0.8.19;
 // For example, if installed via npm, use:
 import {VRFConsumerBaseV2Plus} from "@chainlink/contracts/src/v0.8/vrf/dev/VRFConsumerBaseV2Plus.sol";
 import {VRFV2PlusClient} from "@chainlink/contracts/src/v0.8/vrf/dev/libraries/VRFV2PlusClient.sol";
-import {VRFCoordinatorV2Interface} from "@chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol"; // Use this interface
 
 contract SimpleLottery is VRFConsumerBaseV2Plus {
 
@@ -48,7 +47,6 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
     uint256 public s_lastRequestId; // Stores the ID of the last VRF request
 
     event LotteryEntered(address indexed player, uint256 amount);
-    // Modified/New events
     event TierWinnerPicked(uint256 indexed requestId, uint256 indexed tierIndex, address indexed winner, uint256 prizeAmount);
     event AllWinnersDistributed(uint256 indexed requestId);
     event LotteryReset(uint256 indexed requestId); // Include requestId if reset is part of fulfillment
@@ -96,8 +94,6 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
         require(players.length == 0, "SimpleLottery: Lottery must be empty of players");
         require(_percentages.length == _counts.length, "SimpleLottery: Percentages and counts array length mismatch");
         require(_percentages.length > 0, "SimpleLottery: Must have at least one prize tier");
-
-        _clearLastDrawWinnerData(); // Clear winner data from the *previous* configuration before setting a new one
 
         delete prizeTierConfigurations; // Clear previous configuration
         totalWinnersToPick = 0;
@@ -156,30 +152,21 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
 
         // Request randomness from Chainlink VRF
         // Original call for real Chainlink VRF V2+ Coordinator (using VRFV2PlusClient.RandomWordsRequest struct)
-        // s_lastRequestId = s_vrfCoordinator.requestRandomWords(
-        //     VRFV2PlusClient.RandomWordsRequest({
-        //         keyHash: s_keyHash,
-        //         subId: s_subscriptionId,
-        //         requestConfirmations: s_requestConfirmations,
-        //         callbackGasLimit: s_callbackGasLimit,
-        //         numWords: numWordsToRequest,
-        //         extraArgs: VRFV2PlusClient._argsToBytes(
-        //             VRFV2PlusClient.ExtraArgsV1({
-        //                 nativePayment: false // use link pay for VRF
-        //             })
-        //         )
-        //     })
-        // );
-
-        // New call for VRFCoordinatorV2Mock (matching its direct function signature)
-        // To call the 5-argument version, explicitly cast s_vrfCoordinator to VRFCoordinatorV2Interface
-        s_lastRequestId = VRFCoordinatorV2Interface(address(s_vrfCoordinator)).requestRandomWords(
-            s_keyHash,
-            uint64(s_subscriptionId), // Cast s_subscriptionId (uint256) to uint64
-            s_requestConfirmations,   // s_requestConfirmations is already uint16
-            s_callbackGasLimit,       // s_callbackGasLimit is already uint32
-            numWordsToRequest         // numWordsToRequest is already uint32 (uint32 in mock)
+        s_lastRequestId = s_vrfCoordinator.requestRandomWords(
+            VRFV2PlusClient.RandomWordsRequest({
+                keyHash: s_keyHash,
+                subId: s_subscriptionId,
+                requestConfirmations: s_requestConfirmations,
+                callbackGasLimit: s_callbackGasLimit,
+                numWords: numWordsToRequest,
+                extraArgs: VRFV2PlusClient._argsToBytes(
+                    VRFV2PlusClient.ExtraArgsV1({
+                        nativePayment: false // use link pay for VRF
+                    })
+                )
+            })
         );
+
         emit RandomWordsRequested(s_lastRequestId, msg.sender, numWordsToRequest);
     }
 
@@ -296,6 +283,7 @@ contract SimpleLottery is VRFConsumerBaseV2Plus {
      */
     function openLottery() public onlyOwner whenLotteryClosed {
         require(prizeTierConfigurations.length > 0, "SimpleLottery: Prize configuration not set. Cannot open lottery.");
+        _clearLastDrawWinnerData();
         lotteryOpen = true;
     }
 

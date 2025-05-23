@@ -22,7 +22,6 @@ function LotteryInfo({
           彩票信息
         </Heading>
        <Divider />
-        <Text fontSize="md" color={textColor}><strong>合约拥有者:</strong> {owner}</Text>
         <Text fontSize="md" color={textColor}><strong>彩票价格:</strong> {ticketPrice} ETH</Text>
         <Text fontSize="md" color={textColor}><strong>当前奖池:</strong> {prizePool} ETH</Text>
         <Text fontSize="md" color={textColor}><strong>彩票状态:</strong> 

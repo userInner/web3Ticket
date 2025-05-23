@@ -76,8 +76,10 @@ const theme = extendTheme({
     // 可以为其他组件如 Card, Input, Text 等定义基础样式
     Container: {
       baseStyle: {
+        w: '100%', // 确保容器尝试占据100%的父容器宽度
         maxW: 'container.lg', // 限制内容最大宽度
-        p: { base: 4, md: 6 },
+        mx: 'auto', // 水平居中
+        px: { base: 4, md: 6 }, // 明确为水平内边距 (padding-left 和 padding-right)
       },
     },
     Heading: {
