@@ -1,102 +1,165 @@
 // src/App.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Container, VStack, Text, Box, Spinner, Button as ChakraButton, useColorMode } from '@chakra-ui/react'; // 导入 Chakra UI 组件, 确保 useColorMode 从这里导入
+import { Container, VStack, Text, Box, Spinner, Button as ChakraButton, useColorMode, useToast, Flex } from '@chakra-ui/react'; // 导入 Chakra UI 组件, 确保 useColorMode 和 useToast 从这里导入
 import { ethers } from 'ethers';
 import { lotteryContractAddress, lotteryContractABI } from './config'; // 导入配置
 import Header from './components/Header'; // 导入 Header 组件
 import { useAppContext } from './context/AppContext'; // 导入 useAppContext
 import { useLotteryData } from './hooks/useLotteryData'; // 导入数据 Hook
 import { useContractEvents } from './hooks/useContractEvents'; // 导入事件 Hook
+import { useAdminActions } from './hooks/useAdminActions'; // 导入管理员操作 Hookimport { useMemo } from 'react'; // 导入 useMemo
+import { useEthPrice } from './hooks/useEthPrice'; // 导入 ETH 价格 Hook
 import Notifications from './components/Notifications'; // 导入通知组件
 import { useWallet } from './hooks/useWallet'; // 自定义 Hook 用于钱包连接
 import './App.css'; // 你可以添加一些基础样式
+import { parseContractError } from './utils/errorUtils'; // 导入错误解析函数
 // Page Components
-import LotteryPage from './components/pages/LotteryPage';
-import AdminPage from './components/pages/AdminPage';
-import HistoryPage from './components/pages/HistoryPage';
+import LotteryPage from './components/pages/LotteryPage'; // 导入 LotteryPage 组件
+import AdminPage from './components/pages/AdminPage'; // 导入 AdminPage 组件
+import HistoryPage from './components/pages/HistoryPage'; // 导入 HistoryPage 组件
 // Common Components
 import Footer from './components/Footer';
 
 function App() {
   const { showNotification, errorMessage, successMessage } = useAppContext(); // 从 Context 获取
   const { colorMode, toggleColorMode } = useColorMode(); // 获取颜色模式切换函数
+  const toast = useToast(); // 正确地从 @chakra-ui/react 导入并使用
 
   // 使用 useWallet Hook 管理钱包状态和连接逻辑
-  const { currentAccount, provider, signer, connectWallet, setCurrentAccount, setProvider, setSigner } = useWallet();
+  const { currentAccount, provider, signer, connectWallet, disconnectWallet, setCurrentAccount, setProvider, setSigner } = useWallet(); // 从 useWallet 获取 disconnectWallet
 
-  const [contract, setContract] = useState(null); // 存储合约实例
-  const [isLoading, setIsLoading] = useState(false); // 用于加载状态
-  const [newAdminTicketPrice, setNewAdminTicketPrice] = useState(""); // 管理员设置新票价的输入
+  // 使用 useEthPrice Hook 获取 ETH 对 USDT 的价格
+  const { ethToUsdtPrice, isLoadingPrice: isLoadingEthPrice, priceError: ethPriceError, refreshEthPrice } = useEthPrice();
 
-    // 使用自定义 Hook 获取合约数据
+  const [isTxLoading, setIsTxLoading] = useState(false); // Specific loading for user transactions
+  // 使用 useMemo 稳定合约实例的创建
+  const lotteryContract = useMemo(() => {
+    const currentSignerOrProvider = signer || provider;
+    if (currentSignerOrProvider && import.meta.env.VITE_CONTRACT_ADDRESS && lotteryContractABI) {
+      console.log("App.jsx: Creating contract instance with:", currentSignerOrProvider);
+      return new ethers.Contract(import.meta.env.VITE_CONTRACT_ADDRESS, lotteryContractABI, currentSignerOrProvider);
+    }
+    console.log("App.jsx: Contract instance is null (useMemo).");
+    return null;
+  }, [signer, provider]); // 依赖 signer 和 provider
+
+  // 使用自定义 Hook 获取合约数据
+  // The lotteryContract instance (from useMemo above) will be passed here
   const {
-    ticketPrice, prizePool, lotteryStatus, owner, players, historicalWinners,
-    isLoadingData, fetchContractData, fetchPlayers, fetchHistoricalWinners
-  } = useLotteryData(contract, provider);
+    ticketPrice,
+    prizePool,
+    lotteryStatus,
+    owner,
+    players,
+    isLoadingData,
+    refreshLotteryData, // Updated from fetchContractData
+    prizeTiers,         // New state
+    lastDrawResults,    // New state
+    isWinnerPickingInProgress, // New state
+    historicalDraws,    // New state, replaces historicalWinners
+    error: lotteryDataError // New state for errors from the hook
+  } = useLotteryData(lotteryContract, provider); // Pass the memoized lotteryContract
+
+  const isOwnerConnected = lotteryContract && currentAccount && owner && currentAccount.toLowerCase() === owner.toLowerCase();
 
   // 使用自定义 Hook 处理合约事件
-  useContractEvents(contract, fetchContractData, fetchPlayers, fetchHistoricalWinners);
+  // 将 requestWinnerToastIdRef 从 useAdminActions 传递给 useContractEvents
+  const {
+    isLoadingAdminAction,
+    newAdminTicketPrice, // Get state from useAdminActions
+    setNewAdminTicketPrice, // Get setter from useAdminActions
+    handleOpenLottery,
+    handlePickWinner, // This is requestWinner
+    handleSetTicketPrice,
+    handleSetPrizeConfiguration, // Get this from useAdminActions
+    requestWinnerToastIdRef, // 从 useAdminActions 获取 ref
+  } = useAdminActions(
+    lotteryContract, showNotification, refreshLotteryData, isOwnerConnected, lotteryStatus, players
+  );
 
- useEffect(() => {
-     document.title = import.meta.env.VITE_APP_TITLE || 'My Lottery DApp';
-  }, []);
-  // 2. 当账户或 provider/signer 变化时，初始化合约实例并获取数据
- 
+  // State for prize tier configuration input in AdminPanel, lifted from useAdminActions
+  const [prizeTiersInput, setPrizeTiersInput] = useState([{ percentage: '', count: '' }]);
+  // State for the prize configuration modal
+  const [isPrizeConfigModalOpen, setIsPrizeConfigModalOpen] = useState(false);
+  const [modalPrizeTiersInput, setModalPrizeTiersInput] = useState([{ percentage: '', count: '' }]);
 
+  // Initialize prizeTiersInput from contract's prizeTiers when they load
   useEffect(() => {
-    const initContract = async () => {
-      if (provider && signer && currentAccount) {
-        try {
-          const lotteryContract = new ethers.Contract(
-            lotteryContractAddress,
-            lotteryContractABI,
-            signer // 对于写操作需要 signer，只读可以用 provider
-          );
-          setContract(lotteryContract);
-          console.log("合约实例已创建:", lotteryContract);
-          // 可以在这里添加获取网络ID的检查，确保用户连接到正确的网络（例如 Sepolia）
-          const network = await provider.getNetwork();
-          console.log("当前网络:", network.name, network.chainId);
-          // if (network.chainId !== YOUR_SEPOLIA_CHAIN_ID) { // 例如 Sepolia chainId is 11155111
-          //   showNotification(`请连接到 Sepolia 测试网络! 当前网络: ${network.name}`, "error");
-          //   return;
-          // }
-          // 数据获取现在完全由 useLotteryData Hook 在其内部的 useEffect 中处理
-
-        } catch (error) {
-            console.error("初始化合约失败:", error);
-            showNotification(`初始化合约失败: ${error.message}`, "error");
-        }
+    if (prizeTiers && prizeTiers.length > 0) {
+      const currentConfig = prizeTiers.map(tier => ({ percentage: tier.percentage.toString(), count: tier.count.toString() }));
+      setPrizeTiersInput(currentConfig);
+      // Also initialize modal input if it's empty or matches default
+      if (modalPrizeTiersInput.length === 1 && modalPrizeTiersInput[0].percentage === '' && modalPrizeTiersInput[0].count === '') {
+        setModalPrizeTiersInput(currentConfig);
       }
-    };
-    initContract();
-    // 当钱包断开连接时，清除合约实例
-    if (!currentAccount || !provider || !signer) {
-        setContract(null);
+    } else {
+      setPrizeTiersInput([{ percentage: '', count: '' }]); // Default if no tiers configured
+      setModalPrizeTiersInput([{ percentage: '', count: '' }]);
     }
-  }, [currentAccount, provider, signer, showNotification]);
-  // 注意：上面的 useEffect 依赖项中，如果 currentAccount, provider, signer 来自 useWallet，
-  // 并且 useWallet 内部的 useEffect 依赖了 showNotification，
-  // 确保 showNotification 是稳定的引用（useAppContext 应该能保证这一点）。
+  }, [prizeTiers]);
+
+  // Handlers for the modal's prize tier input
+  const handleAddModalPrizeTierInput = useCallback(() => {
+    setModalPrizeTiersInput(prevTiers => [...prevTiers, { percentage: '', count: '' }]);
+  }, []);
+
+  const handleRemoveModalPrizeTierInput = useCallback((index) => {
+    setModalPrizeTiersInput(prevTiers => prevTiers.filter((_, i) => i !== index));
+  }, []);
+
+  const handleModalPrizeTierInputChange = useCallback((index, field, value) => {
+    setModalPrizeTiersInput(prevTiers =>
+      prevTiers.map((tier, i) =>
+        i === index ? { ...tier, [field]: value } : tier
+      )
+    );
+  }, []);
+
+  const openPrizeConfigModal = () => {
+    // Initialize modal with current configuration from contract if available,
+    // otherwise, use the last edited state (prizeTiersInput) or default.
+    if (prizeTiers && prizeTiers.length > 0) {
+      setModalPrizeTiersInput(prizeTiers.map(tier => ({ percentage: tier.percentage.toString(), count: tier.count.toString() })));
+    } else {
+      // If no contract config, use the current state of prizeTiersInput (which might have unsaved changes)
+      // or a fresh default if prizeTiersInput is also default.
+      setModalPrizeTiersInput(prizeTiersInput.length > 0 && prizeTiersInput[0].percentage !== '' ? prizeTiersInput : [{ percentage: '', count: '' }]);
+    }
+    setIsPrizeConfigModalOpen(true);
+  };
+
+  const handleSubmitPrizeConfigurationFromModal = async () => {
+    await handleSetPrizeConfiguration(modalPrizeTiersInput); // from useAdminActions
+    // If successful, useAdminActions will call refreshLotteryData, which updates prizeTiers,
+    // which in turn updates prizeTiersInput and modalPrizeTiersInput via useEffect.
+    setIsPrizeConfigModalOpen(false);
+  };
+
+  useContractEvents(lotteryContract, refreshLotteryData, requestWinnerToastIdRef, toast); // Updated to use refreshLotteryData
+  useEffect(() => {
+    document.title = import.meta.env.VITE_APP_TITLE || 'My Lottery DApp';
+  }, []);
 
   // 4. 购买彩票的函数
   const handleEnterLottery = async () => {
-    if (!contract || !signer) {
-      showNotification("请先连接钱包并确保合约已初始化。", "error");
+    if (!lotteryContract || !signer) { // Use memoized lotteryContract
+      showNotification("请先连接您的钱包。", "warning");
+      await connectWallet(); // 尝试连接钱包
       return;
     }
     if (!lotteryStatus) {
-        showNotification("抱歉，当前彩票已关闭。", "error");
-        return;
+      showNotification("抱歉，当前彩票已关闭。", "error");
+      return;
     }
 
-    setIsLoading(true);
+    console.log("购买彩票函数被调用");
+    setIsTxLoading(true);
     try {
-      const priceInWei = await contract.ticketPrice(); // 获取最新的票价 (Wei)
+      const priceInWei = await lotteryContract.ticketPrice(); // Use memoized lotteryContract
 
       // 发送交易
-      const tx = await contract.enterLottery({
+      const tx = await lotteryContract.enterLottery({ // Use memoized lotteryContract
         value: priceInWei // 发送与票价等值的 Ether
       });
 
@@ -104,213 +167,176 @@ function App() {
       await tx.wait(); // 等待交易被矿工确认
 
       showNotification(`彩票购买成功！交易哈希: ${tx.hash}`, "success");
-      // 交易成功后，重新获取最新的奖池等数据 (事件监听器也会做一部分)
-      fetchContractData(contract);
-      fetchPlayers(contract);
+      // 交易成功后，重新获取最新的奖池等数据.
+      // fetchContractData and fetchPlayers (from useLotteryData) use the lotteryContract instance
+      // they were initialized with, so no need to pass it again.
+      refreshLotteryData(); // Call the unified refresh function
 
     } catch (error) {
       console.error("购买彩票失败:", error);
-      // 用户拒绝交易等常见错误
-      if (error.code === 4001) {
-         showNotification("您已取消交易。", "error");
-      } else if (error.reason) { // Ethers v6 specific for contract reverts
-        showNotification(`购买彩票失败: ${error.reason}`, "error");
-      } else if (error.data?.message || error.message) {
-        // 尝试从 error.data.message (常见于 Hardhat/Foundry 错误) 或 error.message 获取 revert原因
-        const revertMessage = error.data?.message || error.message;
-        if (revertMessage.includes("Must send exact ticket price")) {
-            showNotification("购买失败：发送的金额与票价不符。", "error");
-        } else if (revertMessage.includes("Lottery is not open")) {
-            showNotification("购买失败：彩票当前未开放。", "error");
-        } else if (revertMessage.includes("Caller is not the owner")) {
-            showNotification("操作失败：您不是合约所有者。", "error");
-        }
-        else {
-            showNotification(`购买彩票失败: ${revertMessage}`, "error");
-        }
-      }
-      else {
-        showNotification(`购买彩票失败，未知错误。详情请查看控制台。`, "error");
-      }
+      const userFriendlyMessage = parseContractError(error);
+      showNotification(userFriendlyMessage, "error");
     } finally {
-      setIsLoading(false);
+      setIsTxLoading(false);
     }
   };
 
   // 5. 监听合约事件
-  // 合并 isLoading 和 isLoadingData
-  const combinedIsLoading = isLoading || isLoadingData;
-  // 6. 管理员操作函数
-  const handleGenericAdminTx = async (txFunction, successMsg, errorMsgBase) => {
-    if (!contract || !signer) {
-      showNotification("请先连接钱包并确保合约已初始化。", "error");
-      return;
-    }
-    setIsLoading(true);
-    try {
-      const tx = await txFunction();
-      showNotification(`正在处理操作: ${tx.hash}...`, "info");
-      await tx.wait();
-      showNotification(successMsg, "success");
-      fetchContractData(contract); // 刷新合约数据
-      // Potentially refresh other data like players if relevant
-    } catch (error) {
-      console.error(`${errorMsgBase}失败:`, error);
-      if (error.code === 4001) {
-        showNotification("您已取消交易。", "error");
-      } else if (error.reason) {
-        showNotification(`${errorMsgBase}失败: ${error.reason}`, "error");
-      } else if (error.data?.message) {
-        showNotification(`${errorMsgBase}失败: ${error.data.message}`, "error");
-      } else {
-        showNotification(`${errorMsgBase}失败: ${error.message || '未知错误'}`, "error");
+  // 辅助函数：按 requestId 分组历史 TierWinnerPicked 事件
+  const groupHistoricalDraws = (draws) => {
+    if (!draws || draws.length === 0) return [];
+    const grouped = draws.reduce((acc, drawEvent) => {
+      const { requestId, tierIndex, winner, prizeAmount, blockNumber, transactionHash } = drawEvent;
+      if (!acc[requestId]) {
+        acc[requestId] = {
+          requestId: requestId,
+          blockNumber: blockNumber,
+          transactionHash: transactionHash, // Note: This might be the tx hash of one of the TierWinnerPicked events
+          tiers: {} // Use an object for tiers for easy access by tierIndex
+        };
       }
-    } finally {
-      setIsLoading(false);
-    }
+      if (!acc[requestId].tiers[tierIndex]) {
+        acc[requestId].tiers[tierIndex] = {
+          tierIndex: tierIndex,
+          winners: [],
+          prizePerWinner: '0' // Initialize, will be set by the first winner's prize in this tier for this draw
+        };
+      }
+      acc[requestId].tiers[tierIndex].winners.push(winner);
+      if (acc[requestId].tiers[tierIndex].prizePerWinner === '0' && parseFloat(prizeAmount) > 0) {
+        acc[requestId].tiers[tierIndex].prizePerWinner = prizeAmount; // prizeAmount is already formatted ETH string
+      }
+      return acc;
+    }, {});
+    return Object.values(grouped).map(draw => ({ ...draw, tiers: Object.values(draw.tiers).sort((a,b) => a.tierIndex - b.tierIndex) })).sort((a, b) => parseInt(b.requestId) - parseInt(a.requestId));
   };
-
-  const handleOpenLottery = async () => {
-    await handleGenericAdminTx(
-      () => contract.openLottery(),
-      "新一轮彩票已成功开启！",
-      "开启彩票"
-    );
-  };
-
-  const handlePickWinner = async () => {
-    if (players.length === 0 && lotteryStatus) {
-        showNotification("当前没有玩家参与，无法开奖。", "warning");
-        return;
-    }
-    if (!lotteryStatus && prizePool === "0.0" && players.length === 0) {
-        showNotification("彩票已结束或未开始，且无奖池和玩家。", "warning");
-        return;
-    }
-    await handleGenericAdminTx(
-      () => contract.pickWinner(),
-      "中奖者已成功抽取！请查看事件通知。", // 事件监听器会显示具体中奖者
-      "抽取中奖者"
-    );
-    // Event listener for WinnerPicked will update UI
-  };
-
-  const handleSetTicketPrice = async () => {
-    if (!newAdminTicketPrice || isNaN(parseFloat(newAdminTicketPrice)) || parseFloat(newAdminTicketPrice) <= 0) {
-      showNotification("请输入有效的新票价 (正数)。", "error");
-      return;
-    }
-    const priceInWei = ethers.parseEther(newAdminTicketPrice);
-    await handleGenericAdminTx(
-      () => contract.setTicketPrice(priceInWei),
-      `票价已成功设置为 ${newAdminTicketPrice} ETH！`,
-      "设置票价"
-    );
-    setNewAdminTicketPrice(""); // 清空输入框
-  };
-
-  const isOwnerConnected = contract && currentAccount && owner && currentAccount.toLowerCase() === owner.toLowerCase();
-
- return (
+  const groupedHistoricalData = useMemo(() => groupHistoricalDraws(historicalDraws), [historicalDraws]);
+  // 合并 isLoading 和 isLoadingData
+  const combinedIsLoading = isTxLoading || isLoadingData || isLoadingAdminAction;
+  return (
     <Router>
-      <Container maxW="container.lg" py={{ base: '6', md: '12' }} centerContent>
-        <VStack spacing={{ base: '6', md: '8' }} align="stretch" w="100%">
-          <Box display="flex" justifyContent="space-between" alignItems="center" w="100%">
-            {/* Placeholder for potential logo or extra space */}
-            <Box /> 
-            <ChakraButton onClick={toggleColorMode} size="sm" variant="outline">
-              切换到 {colorMode === 'light' ? '深色' : '浅色'}模式
-            </ChakraButton>
-          </Box>
+      <Flex direction="column" minH="100vh" bg={colorMode === 'dark' ? 'gray.800' : 'white'}> {/* Use colorMode for background */}
+        <Header currentAccount={currentAccount} connectWallet={connectWallet} disconnectWallet={disconnectWallet} isLoading={combinedIsLoading} isOwnerConnected={isOwnerConnected} colorMode={colorMode} toggleColorMode={toggleColorMode} />
 
-          <Header
-            currentAccount={currentAccount}
-            connectWallet={connectWallet}
-            isLoading={combinedIsLoading}
-            isOwnerConnected={isOwnerConnected} // Pass this to Header for Admin link
-          />
-
+        <Box as="main" flex="1" w="100%" overflowY="auto"> {/* flex="1" makes it grow, overflowY for scrolling */}
+          <Container 
+            maxW="container.lg" 
+            w="100%" 
+            px={{ base: 4, md: 6 }} // Define consistent horizontal padding here
+            py={{ base: '6', md: '12' }} 
+            display="flex" 
+            flexDirection="column" 
+            flexGrow={1}>
+            <VStack spacing={{ base: '6', md: '8' }} align="stretch" w="100%" flexGrow={1}> {/* 确保这个VStack也能flexGrow */}
           <Notifications />
 
-          {combinedIsLoading && !contract && !currentAccount && ( // 初始加载合约时显示
-            <VStack py="20">
-              <Spinner size="xl" color="brand.500" thickness="4px" />
-              <Text>正在连接到区块链网络...</Text>
-            </VStack>
-          )}
-
-          <Box as="main" w="100%">
-            <Routes>
-              <Route 
-                path="/" 
-                element={
-                  <LotteryPage 
-                    contract={contract}
-                    currentAccount={currentAccount}
-                    owner={owner}
-                    ticketPrice={ticketPrice}
-                    prizePool={prizePool}
-                    lotteryStatus={lotteryStatus}
-                    isLoadingData={isLoadingData}
-                    fetchContractData={fetchContractData}
-                    players={players}
-                    handleEnterLottery={handleEnterLottery}
-                    isLoading={isLoading}
-                  />
-                } 
-              />
-              <Route 
-                path="/admin" 
-                element={
-                  isOwnerConnected ? (
-                    <AdminPage 
-                      isOwnerConnected={isOwnerConnected}
-                      isLoading={isLoading}
-                      lotteryStatus={lotteryStatus}
-                      players={players}
-                      handleOpenLottery={handleOpenLottery}
-                      handlePickWinner={handlePickWinner}
-                      newAdminTicketPrice={newAdminTicketPrice}
-                      setNewAdminTicketPrice={setNewAdminTicketPrice}
-                      handleSetTicketPrice={handleSetTicketPrice}
-                      currentAccount={currentAccount}
-                    />
-                  ) : (
-                    <Navigate to="/" replace /> // If not owner, redirect to home
-                  )
-                } 
-              />
-              <Route 
-                path="/history" 
-                element={
-                  <HistoryPage 
-                    historicalWinners={historicalWinners} 
-                    currentAccount={currentAccount}
-                  />
-                } 
-              />
-            </Routes>
-          </Box>
-
-          {!currentAccount && !combinedIsLoading && (
-              <Text textAlign="center" fontSize="lg" color="gray.500" py="10">
+          {/* This Box will contain the main content (loading/connect/routes) and grow to fill available space.
+              It's set to be a flex column so its children can use flexGrow. */}
+          <Box flexGrow={1} w="100%" display="flex" flexDirection="column">
+            {combinedIsLoading && !lotteryContract && !currentAccount ? ( // Use memoized lotteryContract
+              <VStack py="20" justifyContent="center" alignItems="center" flexGrow={1} w="100%"> {/* Use flexGrow to fill parent Box */}
+                <Spinner size="xl" color="brand.500" thickness="4px" />
+                <Text>正在连接到区块链网络...</Text>
+              </VStack>
+            ) : !currentAccount && !combinedIsLoading ? (
+              <VStack py="10" justifyContent="center" alignItems="center" flexGrow={1} w="100%"> {/* Use flexGrow to fill parent Box */}
+                <Text textAlign="center" fontSize="lg" color="gray.500">
                   请先连接您的 MetaMask 钱包以开始。
-              </Text>
-          )}
+                </Text>
+              </VStack>
+            ) : (
+              // This Box wraps the Routes and ensures it fills the available space from its parent Box.
+              <Box w="100%" display="flex" flexDirection="column" flexGrow={1}>
+                <Routes>
+                  <Route
+                    path="/"
+                    element={
+                      <LotteryPage
+                        currentAccount={currentAccount}
+                        owner={owner}
+                        ticketPrice={ticketPrice}
+                        prizePool={prizePool}
+                        lotteryStatus={lotteryStatus}
+                        isLoadingData={isLoadingData}
+                        players={players}
+                        handleEnterLottery={handleEnterLottery}
+                        isLoadingTx={isTxLoading} // 用户交易的加载状态
+                        prizeTiers={prizeTiers}
+                        lastDrawResults={lastDrawResults}
+                        isWinnerPickingInProgress={isWinnerPickingInProgress}
+                        refreshLotteryData={refreshLotteryData} // 传递刷新函数
+                        lotteryDataError={lotteryDataError} // 传递错误状态
+                        // ETH 价格相关的 props
+                        ethToUsdtPrice={ethToUsdtPrice}
+                        isLoadingEthPrice={isLoadingEthPrice}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/admin"
+                    element={
+                      isOwnerConnected ? (
+                        <AdminPage
+                          // Pass props from useAdminActions and App state
+                          isOwnerConnected={isOwnerConnected}
+                          isLoading={isLoadingAdminAction} // Use isLoading from useAdminActions
+                          lotteryStatus={lotteryStatus}
+                          players={players}
+                          handleOpenLottery={handleOpenLottery}
+                          handlePickWinner={handlePickWinner}
+                          // newAdminTicketPrice and setNewAdminTicketPrice are now managed by useAdminActions
+                          newAdminTicketPrice={newAdminTicketPrice}
+                          setNewAdminTicketPrice={setNewAdminTicketPrice}
+                          handleSetTicketPrice={handleSetTicketPrice}
+                          isPickingWinner={isWinnerPickingInProgress} // 传递 isWinnerPickingInProgress
+                          // Props for Prize Configuration Modal
+                          openPrizeConfigModal={openPrizeConfigModal}
+                          isPrizeConfigModalOpen={isPrizeConfigModalOpen}
+                          setIsPrizeConfigModalOpen={setIsPrizeConfigModalOpen}
+                          modalPrizeTiersInput={modalPrizeTiersInput}
+                          handleAddModalPrizeTierInput={handleAddModalPrizeTierInput}
+                          handleRemoveModalPrizeTierInput={handleRemoveModalPrizeTierInput}
+                          handleModalPrizeTierInputChange={handleModalPrizeTierInputChange}
+                          handleSubmitPrizeConfigurationFromModal={handleSubmitPrizeConfigurationFromModal}
+                          // Display current contract config
+                          currentPrizeTiers={prizeTiers} // Pass the actual current tiers from contract
+                          currentPrizeTierConfigCount={prizeTiers?.length || 0}
+                          currentAccount={currentAccount}
+                        />
+                      ) : (
+                        <Navigate to="/" replace /> // If not owner, redirect to home
+                      )
+                    }
+                  />
+                  <Route
+                    path="/history"
+                    element={
+                      <HistoryPage
+                        groupedHistoricalData={groupedHistoricalData} // Pass the grouped historical data
+                        currentAccount={currentAccount}
+                        isLoadingHistory={isLoadingData} // Pass the loading state for history
+                      />
+                    }
+                  />
+                </Routes>
+              </Box>
+            )}
+            </Box>
 
+          {/* Disclaimer VStack - remains at the bottom of the main content area */}
           <VStack spacing="2" pt="8" color={colorMode === 'dark' ? "gray.400" : "gray.500"} fontSize="sm">
             <Text>注意：本 DApp 仅用于学习和演示目的，实际使用请谨慎。</Text>
             <Text>免责声明：本 DApp 不提供任何投资建议，参与彩票需谨慎。</Text>
-            <Text>请确保在测试网络上进行操作，避免损失真实资产。</Text>
-          </VStack>
+          <Text>请确保在测试网络上进行操作，避免损失真实资产。</Text>
+                </VStack>
+            </VStack> 
+          </Container> 
+        </Box>
 
-          <Footer
-            lotteryContractAddress={lotteryContractAddress}
-          />
-        </VStack>
-      </Container>
+      <Footer lotteryContractAddress={lotteryContractAddress} />
+      </Flex>   
     </Router>
-  );
+  ); // Added closing parenthesis for the return statement
 }
 
 export default App;

@@ -1,20 +1,31 @@
 import React from 'react';
-import { useAppContext } from '../context/AppContext'; // 导入 useAppContext
+import { Box, Text, Link, useColorModeValue, Flex } from '@chakra-ui/react';
+import { ExternalLinkIcon } from '@chakra-ui/icons';
 
-function Footer({ lotteryContractAddress }) { // 移除 shortenAddress from props
-  const { shortenAddress } = useAppContext(); // 从 Context 获取 shortenAddress
+function Footer({lotteryContractAddress}) {
+  const bgColor = useColorModeValue('gray.100', 'gray.800');
+  const textColor = useColorModeValue('gray.600', 'gray.300');
+
   return (
-    <footer>
-      <p>去中心化彩票 DApp</p>
-      <p>© {new Date().getFullYear()}</p>
-      <p>由 [CryptoCG] 开发</p>
-      <p>使用 Ethers.js 和 React 构建</p>
-      {lotteryContractAddress && (
-       <p>
-          合约地址: {lotteryContractAddress}
-        </p>
-      )}
-    </footer>
+    <Box as="footer" bg={bgColor} py={4} mt="8">
+      <Flex justify="center" align="center" maxW="container.lg" mx="auto" direction={{base: "column", md: "row"}} textAlign={{base: "center", md: "left"}}>
+        <Text fontSize="sm" color={textColor}>
+          © {new Date().getFullYear()} Luck Ticket. All Rights Reserved.
+        </Text>
+        <Box ml={{md:"4"}} mt={{base:"2", md:"0"}}>
+        {lotteryContractAddress && (
+          <Link
+            href={`https://sepolia.etherscan.io/address/${lotteryContractAddress}`}
+            isExternal
+            fontSize="sm"
+            color="blue.400"
+          >
+            合约地址 <ExternalLinkIcon mx="2px" />
+          </Link>
+        )}
+        </Box>
+      </Flex>
+    </Box>
   );
 }
 

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Box, Heading, Text, VStack, List, ListItem, ListIcon, useColorModeValue, Icon, Flex, Stack, Button } from '@chakra-ui/react';
+import { Heading, Text, VStack, List, ListItem, useColorModeValue, Icon, Flex, Stack, Button } from '@chakra-ui/react';
 import { FaUserCircle } from 'react-icons/fa'; // 导入一个用户图标
+import Card from './common/Card'; // 导入 Card 组件
 
 function PlayerList({ players, lotteryStatus }) {
-  const cardBg = useColorModeValue('white', 'gray.700');
+  console.log("PlayerList rendered");
   const textColor = useColorModeValue('gray.600', 'gray.300');
   const headingColor = useColorModeValue('gray.700', 'whiteAlpha.900');
   const itemHoverBg = useColorModeValue('gray.100', 'gray.600');
@@ -25,7 +26,7 @@ function PlayerList({ players, lotteryStatus }) {
   };
 
   return (
-    <Box p="6" bg={cardBg} borderRadius="xl" boxShadow="lg" w="100%">
+    <Card> {/* 使用 Card 组件 */}
       <VStack spacing="4" align="stretch">
         <Heading as="h3" size="md" color={headingColor} display="flex" alignItems="center">
           当前参与玩家
@@ -75,7 +76,7 @@ function PlayerList({ players, lotteryStatus }) {
           <Text color={textColor} textAlign="center" py="4">{lotteryStatus ? "还没有玩家参与本轮抽奖。" : "当前没有开放的抽奖或已结束。"}</Text>
         )}
       </VStack>
-    </Box>
+    </Card>
    );
  }
 

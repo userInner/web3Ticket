@@ -5,109 +5,213 @@ import { useAppContext } from '../context/AppContext';
 export function useLotteryData(contract, provider) {
   const { showNotification } = useAppContext();
 
+  // --- 现有状态 ---
   const [ticketPrice, setTicketPrice] = useState("0");
   const [prizePool, setPrizePool] = useState("0");
   const [lotteryStatus, setLotteryStatus] = useState(false);
   const [owner, setOwner] = useState("");
   const [players, setPlayers] = useState([]);
-  const [historicalWinners, setHistoricalWinners] = useState([]);
   const [isLoadingData, setIsLoadingData] = useState(false);
 
-  const fetchContractData = useCallback(async (contractInstanceOrNull) => {
-    const contractToUse = contractInstanceOrNull || contract;
-    if (!contractToUse) return;
+  // --- 新增/修改的状态以适应新合约 ---
+  const [prizeTiers, setPrizeTiers] = useState([]); // 存储奖品等级配置
+  const [lastDrawResults, setLastDrawResults] = useState([]); // 存储最近一期各等级获奖者和奖金
+  const [isWinnerPickingInProgress, setIsWinnerPickingInProgress] = useState(false);
+  const [historicalDraws, setHistoricalDraws] = useState([]); // 存储历史开奖记录 (基于 TierWinnerPicked)
+
+  const fetchLotteryData = useCallback(async () => {
+    if (!contract || !provider) {
+      console.log("useLotteryData: Contract or provider not available for fetching data.");
+      setIsLoadingData(false); // 确保在没有合约或提供者时停止加载
+      return;
+    }
 
     setIsLoadingData(true);
     try {
-      const price = await contractToUse.ticketPrice();
+      console.log("Hook: Fetching all contract data...");
+
+      // 1. 获取基础彩票信息
+      const price = await contract.ticketPrice();
       setTicketPrice(ethers.formatEther(price));
 
-      const pool = await contractToUse.getPrizePool();
+      const pool = await contract.getPrizePool();
       setPrizePool(ethers.formatEther(pool));
 
-      const status = await contractToUse.lotteryOpen();
+      const status = await contract.getLotteryStatus(); // 使用 getLotteryStatus
       setLotteryStatus(status);
 
-      const contractOwner = await contractToUse.owner();
+      const contractOwner = await contract.owner();
       setOwner(contractOwner);
 
-      console.log("Hook: Fetched contract data");
-    } catch (error) {
-      console.error("Hook: 获取合约数据失败:", error);
-      showNotification(`获取合约数据失败: ${error.message}`, "error");
-    } finally {
-      setIsLoadingData(false);
-    }
-  }, [contract, showNotification]);
+      const pickingInProgress = await contract.isWinnerPickingInProgress();
+      setIsWinnerPickingInProgress(pickingInProgress);
 
-  const fetchPlayers = useCallback(async (contractInstanceOrNull) => {
-    const contractToUse = contractInstanceOrNull || contract;
-    if (!contractToUse) return;
-    try {
-      const playerList = await contractToUse.getPlayers();
+      const playerList = await contract.getPlayers();
       setPlayers(playerList);
-      console.log("Hook: Fetched players");
-    } catch (error) {
-      console.error("Hook: 获取玩家列表失败:", error);
-      showNotification("获取玩家列表失败。", "error");
-    }
-  }, [contract, showNotification]);
 
-  const fetchHistoricalWinners = useCallback(async (contractInstanceOrNull) => {
-    const contractToUse = contractInstanceOrNull || contract;
-    if (!contractToUse || !provider) return;
-    try {
+      // 2. 获取奖品等级配置
+      const tierCountBigInt = await contract.getPrizeTierConfigurationCount();
+      const tierCount = Number(tierCountBigInt);
+      const fetchedTiers = [];
+      if (tierCount > 0) {
+        for (let i = 0; i < tierCount; i++) {
+          const config = await contract.getPrizeTierConfig(i);
+          fetchedTiers.push({
+            percentage: Number(config.percentage),
+            count: Number(config.count),
+          });
+        }
+      }
+      setPrizeTiers(fetchedTiers);
+
+      // 3. 获取最近一期开奖结果
+      const fetchedLastDrawResults = [];
+      if (tierCount > 0) { // 只有在配置了等级后才查询
+        for (let i = 0; i < tierCount; i++) {
+          const winnersArray = await contract.getLastDrawTierWinners(i);
+          const prizePerWinnerBigInt = await contract.getLastDrawTierPrizePerWinner(i);
+          fetchedLastDrawResults.push({
+            tierIndex: i,
+            winners: winnersArray,
+            prizePerWinner: ethers.formatEther(prizePerWinnerBigInt),
+          });
+        }
+      }
+      setLastDrawResults(fetchedLastDrawResults);
+
+      // 4. 获取历史开奖数据 (TierWinnerPicked 事件)
+      // 注意: 这部分逻辑会比较复杂，如果事件量大，需要优化
       const latestBlock = await provider.getBlockNumber();
-      const filter = contractToUse.filters.WinnerPicked();
-      let allEvents = [];
-      const blockRangeLimit = 1000; // 根据你的 RPC 节点调整，MetaMask 通常是 1000-2000
-      // 你可能需要一个已知的大致合约部署区块号，或者一个最大回溯深度
-      // const contractDeploymentBlock = 0; // 替换为你的合约部署区块号，或者一个合理的起始点
-      let fromBlock = Math.max(0, latestBlock - (blockRangeLimit * 10)); // 示例：最多查最近 10 * blockRangeLimit 区块
-      // 如果想查更久远，需要更复杂的循环逻辑，或者知道合约部署区块
+      const filter = contract.filters.TierWinnerPicked(); // 使用新的事件
+      let allTierWinnerEvents = [];
+      const blockRangeLimit = 1000;
+      let fromBlock = Math.max(0, latestBlock - (blockRangeLimit * 20)); // 查询最近20个范围，可调整
 
       for (let i = latestBlock; i > fromBlock; i -= blockRangeLimit) {
         const toBlockQuery = i;
         const fromBlockQuery = Math.max(fromBlock, i - blockRangeLimit + 1);
-        if (fromBlockQuery > toBlockQuery) break; // 防止无限循环或无效范围
-
+        if (fromBlockQuery > toBlockQuery) break;
         try {
-          console.log(`Querying WinnerPicked events from block ${fromBlockQuery} to ${toBlockQuery}`);
-          const chunkEvents = await contractToUse.queryFilter(filter, fromBlockQuery, toBlockQuery);
-          allEvents = allEvents.concat(chunkEvents);
+          // console.log(`Querying TierWinnerPicked events from block ${fromBlockQuery} to ${toBlockQuery}`);
+          const chunkEvents = await contract.queryFilter(filter, fromBlockQuery, toBlockQuery);
+          allTierWinnerEvents = allTierWinnerEvents.concat(chunkEvents);
         } catch (chunkError) {
-          console.error(`Error querying event chunk from ${fromBlockQuery} to ${toBlockQuery}:`, chunkError);
-          // 可以选择在这里中断，或者跳过这个 chunk
-          break; 
+          console.error(`Error querying TierWinnerPicked event chunk from ${fromBlockQuery} to ${toBlockQuery}:`, chunkError);
+          // 根据需要处理错误，例如部分加载或中断
+          if (chunkError.message && chunkError.message.includes("query returned more than 10000 results")) {
+            console.warn("Query range too large for TierWinnerPicked, consider reducing blockRangeLimit or total depth.");
+          }
+          break;
         }
-        if (fromBlockQuery === fromBlock) break; // 到达了我们设定的最早查询点
+        if (fromBlockQuery === fromBlock) break;
       }
-      const winnersData = allEvents.map(event => ({
-          address: event.args.winner,
-          amount: ethers.formatEther(event.args.prizeAmount || 0), // 使用 prizeAmount，并提供一个默认值以防万一
-          blockNumber: event.blockNumber,
-          transactionHash: event.transactionHash,
-      })).sort((a, b) => b.blockNumber - a.blockNumber); // 按区块号降序排列（最新的在前）
 
-      setHistoricalWinners(winnersData);
-      console.log("Hook: Fetched historical winners");
+      // 简单处理历史事件：按区块号和请求ID（如果需要更精细的分组）
+      // 这里我们先简单地将所有 TierWinnerPicked 事件按区块号排序
+      const processedHistoricalDraws = allTierWinnerEvents.map(event => ({
+        requestId: event.args.requestId.toString(),
+        tierIndex: Number(event.args.tierIndex),
+        winner: event.args.winner,
+        prizeAmount: ethers.formatEther(event.args.prizeAmount),
+        blockNumber: event.blockNumber,
+        transactionHash: event.transactionHash,
+      })).sort((a, b) => b.blockNumber - a.blockNumber); // 最新的在前
+      setHistoricalDraws(processedHistoricalDraws);
+
+      console.log("Hook: Fetched all contract data successfully.");
+
     } catch (error) {
-      console.error("Hook: 获取历史中奖者失败:", error);
-      // showNotification("获取历史中奖者失败。", "error");
-      if (!error.message.includes("limited to a 1000 blocks range")) { // 只对非区块范围错误提示
-        showNotification("获取历史中奖者失败。", "error");
+      console.error("Hook: 获取合约数据失败:", error);
+      let friendlyMessage = `获取彩票数据失败: ${error.message || '未知错误'}`;
+      if (error.code === 'CALL_EXCEPTION') {
+        friendlyMessage = "调用合约函数失败，请检查网络或合约状态。";
       }
+      showNotification(friendlyMessage, "error");
+    } finally {
+      setIsLoadingData(false);
     }
-  }, [contract, provider, showNotification]);
+  }, [contract, provider, showNotification]); // provider is a dependency for getBlockNumber
 
   // Initial fetch and refetch when contract changes
   useEffect(() => {
     if (contract && provider) {
-      fetchContractData(contract);
-      fetchPlayers(contract);
-      fetchHistoricalWinners(contract);
+      console.log("useLotteryData: Initial data fetch or contract/provider changed.");
+      fetchLotteryData();
     }
-  }, [contract, provider, fetchContractData, fetchPlayers, fetchHistoricalWinners]);
+  }, [contract, provider, fetchLotteryData]); // fetchLotteryData is memoized
 
-  return { ticketPrice, prizePool, lotteryStatus, owner, players, historicalWinners, isLoadingData, fetchContractData, fetchPlayers, fetchHistoricalWinners, setPlayers, setHistoricalWinners, setLotteryStatus, setPrizePool };
+  // Event Listeners
+  useEffect(() => {
+    if (!contract) return;
+
+    console.log("Hook: Setting up event listeners...");
+
+    const onLotteryEntered = (player, amount) => {
+      console.log(`Event: LotteryEntered - Player: ${player}, Amount: ${ethers.formatEther(amount)}`);
+      showNotification(`新玩家 ${player.slice(0,6)}... 加入!`, "success");
+      // Optimistic update or refetch specific data
+      fetchLotteryData(); // Or more targeted: fetchPlayers(), fetchPrizePool()
+    };
+
+    const onTierWinnerPicked = (requestId, tierIndex, winner, prizeAmount) => {
+      console.log(`Event: TierWinnerPicked - RequestID: ${requestId}, Tier: ${tierIndex}, Winner: ${winner}, Prize: ${ethers.formatEther(prizeAmount)}`);
+      // This event fires for each winner.
+      // You might want to update a temporary "current draw progress" state here.
+      // For simplicity, we'll rely on AllWinnersDistributed to refresh the final state.
+    };
+
+    const onAllWinnersDistributed = (requestId) => {
+      console.log(`Event: AllWinnersDistributed - RequestID: ${requestId}`);
+      showNotification("开奖完成！奖金已分配。", "success");
+      fetchLotteryData(); // Refresh all data, especially lastDrawResults and lotteryStatus
+    };
+
+    const onLotteryReset = (requestId) => {
+      console.log(`Event: LotteryReset - RequestID: ${requestId}`);
+      showNotification("彩票已重置，可以开始新一轮。", "info");
+      fetchLotteryData(); // Refresh all data
+    };
+
+    const onPrizeConfigurationSet = (totalTiers, totalWinners) => {
+      console.log(`Event: PrizeConfigurationSet - Tiers: ${totalTiers}, Total Winners: ${totalWinners}`);
+      showNotification("奖品等级配置已更新。", "info");
+      fetchLotteryData(); // Refresh prizeTiers and related info
+    };
+
+    contract.on("LotteryEntered", onLotteryEntered);
+    contract.on("TierWinnerPicked", onTierWinnerPicked);
+    contract.on("AllWinnersDistributed", onAllWinnersDistributed);
+    contract.on("LotteryReset", onLotteryReset);
+    contract.on("PrizeConfigurationSet", onPrizeConfigurationSet);
+
+    return () => {
+      console.log("Hook: Cleaning up event listeners...");
+      contract.off("LotteryEntered", onLotteryEntered);
+      contract.off("TierWinnerPicked", onTierWinnerPicked);
+      contract.off("AllWinnersDistributed", onAllWinnersDistributed);
+      contract.off("LotteryReset", onLotteryReset);
+      contract.off("PrizeConfigurationSet", onPrizeConfigurationSet);
+    };
+  }, [contract, showNotification, fetchLotteryData]); // fetchLotteryData is a dependency if used inside listeners
+
+  return {
+    // Existing
+    ticketPrice,
+    prizePool,
+    lotteryStatus,
+    owner,
+    players,
+    isLoadingData,
+    // New
+    prizeTiers,
+    lastDrawResults,
+    isWinnerPickingInProgress,
+    historicalDraws, // This now contains TierWinnerPicked event data
+    // Actions
+    refreshLotteryData: fetchLotteryData, // Expose a manual refresh function
+    // Setters (if needed for optimistic updates, though generally prefer refetching)
+    // setPlayers,
+    // setLotteryStatus,
+    // setPrizePool,
+  };
 }
